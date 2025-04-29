@@ -62,14 +62,12 @@ type job struct {
 }
 
 type DynamicRouter struct {
-	wg   sync.WaitGroup
 	jobs chan job
 }
 
 func NewDynamicRouter() *DynamicRouter {
 	return &DynamicRouter{
-		wg:   sync.WaitGroup{},
-		jobs: make(chan job),
+		jobs: make(chan job, 100),
 	}
 }
 
@@ -80,21 +78,21 @@ func (dr *DynamicRouter) AddJob(mainURL, shortenedURL string) {
 	}
 }
 
-func (dr *DynamicRouter) StartSettingUpRoutes(
-	ctx context.Context,
-	mux *http.ServeMux,
-) {
+func (dr *DynamicRouter) StartSettingUpRoutes(ctx context.Context, mux *http.ServeMux) {
+	var wg sync.WaitGroup
+
 	for i := 0; i < workersCountEnv; i++ {
-		dr.wg.Add(1)
+		wg.Add(1)
+
 		go func(id int) {
-			defer dr.wg.Done()
+			defer wg.Done()
 			for {
 				select {
 				case <-ctx.Done():
 					return
 				case j, ok := <-dr.jobs:
 					if !ok {
-						continue
+						return
 					}
 					mux.HandleFunc(j.shortenedURL, func(w http.ResponseWriter, r *http.Request) {
 						http.Redirect(w, r, j.mainURL, http.StatusFound)
@@ -104,4 +102,9 @@ func (dr *DynamicRouter) StartSettingUpRoutes(
 		}(i)
 	}
 
+	go func() {
+		<-ctx.Done()
+		close(dr.jobs)
+		wg.Wait()
+	}()
 }

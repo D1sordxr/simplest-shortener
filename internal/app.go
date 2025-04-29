@@ -12,72 +12,28 @@ import (
 	"syscall"
 )
 
-type App interface {
-	Run()
+type App struct {
+	log    pkg.Log
+	server *present.Server
 }
 
-type app struct {
-	log           pkg.Log
-	storage       *infra.Storage
-	shortenSvc    *svc.ShortenerSvc
-	mid           *present.Middleware
-	handler       *present.Handler
-	router        *present.Router
-	dynamicRouter *present.DynamicRouter
-}
-
-func NewApp() App {
+func NewApp() *App {
 	log := slog.Default()
-	log.Info("Starting application...")
-
 	storage := infra.NewStorage()
-	log.Info("Storage initialized")
+	shortenSvc := svc.NewShortenerSvc(log, storage, present.NewDynamicRouter())
+	server := present.NewServer(log, shortenSvc)
 
-	dRouter := present.NewDynamicRouter()
-
-	shortenSvc := svc.NewShortenerSvc(log, storage, dRouter)
-	log.Info("Shortener service initialized")
-
-	mid := present.NewMiddleware(log)
-	handler := present.NewHandler(shortenSvc)
-	router := present.NewRouter(mid, handler)
-
-	return &app{
-		log:           log,
-		storage:       storage,
-		shortenSvc:    shortenSvc,
-		mid:           mid,
-		handler:       handler,
-		router:        router,
-		dynamicRouter: dRouter,
+	return &App{
+		log:    log,
+		server: server,
 	}
 }
 
-func (a *app) Run() {
+func (a *App) Run() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	criticalErrChan := make(chan error)
-
-	a.log.Info("Starting server...")
-	go func() {
-		err := a.router.StartServer(":8080")
-		if err != nil {
-			a.log.Error("Error starting server", "error", err)
-			criticalErrChan <- err
-		}
-	}()
-
-	go a.dynamicRouter.StartSettingUpRoutes(ctx, a.router.Mux)
-
-	a.log.Info("Server started successfully")
-
-	select {
-	case <-ctx.Done():
-		a.log.Info("Shutting down server...")
-	case err := <-criticalErrChan:
-		a.log.Error("Critical error occurred", "error", err.Error())
-		stop()
-		a.log.Info("Shutting down server due to critical error...")
+	if err := a.server.Run(ctx); err != nil {
+		a.log.Error("Critical error during run", "error", err)
 	}
 }

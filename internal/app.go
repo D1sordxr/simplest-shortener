@@ -3,10 +3,13 @@ package internal
 import (
 	"context"
 	"log/slog"
+	"os"
+	"os/signal"
 	"simplest-shortener/internal/infra"
 	"simplest-shortener/internal/present"
 	"simplest-shortener/internal/svc"
 	"simplest-shortener/pkg"
+	"syscall"
 )
 
 type App interface {
@@ -40,26 +43,41 @@ func NewApp() App {
 	router := present.NewRouter(mid, handler)
 
 	return &app{
-		log:        log,
-		storage:    storage,
-		shortenSvc: shortenSvc,
-		mid:        mid,
-		handler:    handler,
-		router:     router,
+		log:           log,
+		storage:       storage,
+		shortenSvc:    shortenSvc,
+		mid:           mid,
+		handler:       handler,
+		router:        router,
+		dynamicRouter: dRouter,
 	}
 }
 
 func (a *app) Run() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	criticalErrChan := make(chan error)
 
 	a.log.Info("Starting server...")
-	err := a.router.StartServer(":8080")
-	if err != nil {
-		a.log.Error("Error starting server", "error", err)
-	}
+	go func() {
+		err := a.router.StartServer(":8080")
+		if err != nil {
+			a.log.Error("Error starting server", "error", err)
+			criticalErrChan <- err
+		}
+	}()
 
-	a.dynamicRouter.StartSettingUpRoutes(ctx, a.router.Mux)
+	go a.dynamicRouter.StartSettingUpRoutes(ctx, a.router.Mux)
 
 	a.log.Info("Server started successfully")
+
+	select {
+	case <-ctx.Done():
+		a.log.Info("Shutting down server...")
+	case err := <-criticalErrChan:
+		a.log.Error("Critical error occurred", "error", err.Error())
+		stop()
+		a.log.Info("Shutting down server due to critical error...")
+	}
 }

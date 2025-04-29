@@ -7,12 +7,16 @@ import (
 )
 
 type middleware interface {
-	Log(handler http.HandlerFunc) http.HandlerFunc
+	Log(handler http.Handler) http.Handler
 }
 
 type shortenerHandler interface {
 	ShortenURL(w http.ResponseWriter, r *http.Request)
 	GetURL(w http.ResponseWriter, r *http.Request)
+}
+
+type health interface {
+	Check(w http.ResponseWriter, r *http.Request)
 }
 
 const (
@@ -24,19 +28,23 @@ type Router struct {
 	Mux  *http.ServeMux
 	mid  middleware
 	hand shortenerHandler
+	health
 }
 
 func NewRouter(mid middleware, hand shortenerHandler) *Router {
 	return &Router{
-		Mux:  http.NewServeMux(),
-		mid:  mid,
-		hand: hand,
+		Mux:    http.NewServeMux(),
+		mid:    mid,
+		hand:   hand,
+		health: new(Health),
 	}
 }
 
 func (r *Router) setupRoutes() {
-	r.Mux.HandleFunc(shortenPathEnv, r.mid.Log(r.hand.ShortenURL))
-	r.Mux.HandleFunc(getShortenedPathEnv, r.mid.Log(r.hand.GetURL))
+	r.Mux.Handle("/health", http.HandlerFunc(r.health.Check))
+
+	r.Mux.Handle(shortenPathEnv, r.mid.Log(http.HandlerFunc(r.hand.ShortenURL)))
+	r.Mux.Handle(getShortenedPathEnv, r.mid.Log(http.HandlerFunc(r.hand.GetURL)))
 }
 
 func (r *Router) StartServer(addr string) error {
@@ -96,6 +104,4 @@ func (dr *DynamicRouter) StartSettingUpRoutes(
 		}(i)
 	}
 
-	close(dr.jobs)
-	dr.wg.Wait()
 }

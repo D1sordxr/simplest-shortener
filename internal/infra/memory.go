@@ -20,13 +20,6 @@ func NewStorage() *Storage {
 	}
 }
 
-func (s *Storage) Set(_ context.Context, key, value string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	s.shortenedURLs[key] = value
-}
-
 func (s *Storage) Get(_ context.Context, key string) (string, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -35,9 +28,16 @@ func (s *Storage) Get(_ context.Context, key string) (string, bool) {
 	return value, ok
 }
 
+func (s *Storage) Set(_ context.Context, key, value string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.shortenedURLs[key] = value
+}
+
 func (s *Storage) Delete(_ context.Context, key string) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	delete(s.shortenedURLs, key)
 }

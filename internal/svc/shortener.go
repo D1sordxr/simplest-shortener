@@ -2,7 +2,6 @@ package svc
 
 import (
 	"context"
-	"math/rand"
 	"simplest-shortener/pkg"
 )
 
@@ -17,9 +16,10 @@ type dynamicRouter interface {
 }
 
 type ShortenerSvc struct {
-	log pkg.Log
 	storage
 	dynamicRouter
+	log pkg.Log
+	gen pkg.Generator
 }
 
 func NewShortenerSvc(log pkg.Log, storage storage, dr dynamicRouter) *ShortenerSvc {
@@ -27,12 +27,31 @@ func NewShortenerSvc(log pkg.Log, storage storage, dr dynamicRouter) *ShortenerS
 		log:           log,
 		storage:       storage,
 		dynamicRouter: dr,
+		gen:           new(pkg.SharedGenerator),
 	}
 }
 
+const (
+	newLengthEnv = 12
+)
+
 func (s *ShortenerSvc) Create(ctx context.Context, url string) string {
-	code := generateRandomCode()
+	if url == "" {
+		s.log.Error("URL is empty")
+		return ""
+	}
+	exist, ok := s.storage.Get(ctx, url)
+	if ok {
+		s.log.Info("URL already exists", "url", url, "code", exist)
+		return exist
+	}
+
+	code := s.gen.GenerateRandomString(newLengthEnv)
+
+	s.dynamicRouter.AddJob(url, code)
+
 	s.storage.Set(ctx, code, url)
+
 	s.log.Info("Created short URL", "code", code, "url", url)
 	return code
 }
@@ -45,19 +64,4 @@ func (s *ShortenerSvc) Get(ctx context.Context, code string) (string, bool) {
 	}
 	s.log.Info("Retrieved URL", "code", code, "url", url)
 	return url, true
-}
-
-const (
-	newLength = 8
-	charset   = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-)
-
-func generateRandomCode() string {
-	newLen := rand.Intn(newLength) + 1
-
-	code := make([]byte, newLen)
-	for i := range code {
-		code[i] = charset[rand.Intn(len(charset))]
-	}
-	return string(code)
 }
